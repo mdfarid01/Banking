@@ -4,6 +4,7 @@ import java.util.*;
 
 public class Main {
 
+  // ---------- Data Structures ----------
   static class Question {
     byte[] qname;
     int qtype;
@@ -15,6 +16,7 @@ public class Main {
     int nextOffset;
   }
 
+  // ---------- DNS Name Reader (handles compression) ----------
   static NameResult readName(byte[] packet, int offset) {
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     int originalOffset = offset;
@@ -23,6 +25,7 @@ public class Main {
     while (true) {
       int len = packet[offset] & 0xFF;
 
+      // Compression pointer
       if ((len & 0xC0) == 0xC0) {
         int pointer =
             ((len & 0x3F) << 8) | (packet[offset + 1] & 0xFF);
@@ -31,12 +34,14 @@ public class Main {
         continue;
       }
 
+      // End of name
       if (len == 0) {
         out.write(0);
         offset++;
         break;
       }
 
+      // Normal label
       out.write(len);
       offset++;
       out.write(packet, offset, len);
@@ -49,6 +54,7 @@ public class Main {
     return res;
   }
 
+  // ---------- MAIN ----------
   public static void main(String[] args) throws Exception {
 
     if (args.length != 2 || !args[0].equals("--resolver")) {
@@ -64,6 +70,8 @@ public class Main {
     resolverSocket.setSoTimeout(3000);
 
     while (true) {
+
+      // ---------- RECEIVE REQUEST ----------
       byte[] req = new byte[512];
       DatagramPacket packet = new DatagramPacket(req, req.length);
       serverSocket.receive(packet);
@@ -78,6 +86,7 @@ public class Main {
       int qdcount =
           ((req[4] & 0xFF) << 8) | (req[5] & 0xFF);
 
+      // ---------- PARSE QUESTIONS ----------
       int offset = 12;
       List<Question> questions = new ArrayList<>();
 
@@ -100,14 +109,16 @@ public class Main {
         questions.add(q);
       }
 
+      boolean singleQuestion = (questions.size() == 1);
       List<byte[]> answers = new ArrayList<>();
 
-      // Forward each question separately
+      // ---------- FORWARD EACH QUESTION ----------
       for (Question q : questions) {
+
+        // Build forwarding packet (1 question only)
         byte[] fwd = new byte[512];
         int fo = 0;
 
-        // ID (any)
         fwd[fo++] = 0x12;
         fwd[fo++] = 0x34;
 
@@ -117,12 +128,9 @@ public class Main {
 
         fwd[fo++] = 0x00;
         fwd[fo++] = 0x01; // QDCOUNT = 1
-        fwd[fo++] = 0x00;
-        fwd[fo++] = 0x00;
-        fwd[fo++] = 0x00;
-        fwd[fo++] = 0x00;
-        fwd[fo++] = 0x00;
-        fwd[fo++] = 0x00;
+        fwd[fo++] = 0x00; fwd[fo++] = 0x00;
+        fwd[fo++] = 0x00; fwd[fo++] = 0x00;
+        fwd[fo++] = 0x00; fwd[fo++] = 0x00;
 
         System.arraycopy(q.qname, 0, fwd, fo, q.qname.length);
         fo += q.qname.length;
@@ -140,48 +148,39 @@ public class Main {
             new DatagramPacket(resp, resp.length);
         resolverSocket.receive(respPacket);
 
-        int ansOffset = 12;
+        // ---------- ANSWER HANDLING ----------
+        if (singleQuestion) {
+          // COPY REAL ANSWER FROM RESOLVER
+          int ansOffset = 12;
+          NameResult skip = readName(resp, ansOffset);
+          ansOffset = skip.nextOffset + 4;
 
-        // skip question
-        NameResult skip = readName(resp, ansOffset);
-        ansOffset = skip.nextOffset + 4;
+          int answerLen = respPacket.getLength() - ansOffset;
+          byte[] ans = new byte[answerLen];
+          System.arraycopy(resp, ansOffset, ans, 0, answerLen);
+          answers.add(ans);
 
-        // copy answer RR
-      // Build our own answer (uncompressed, safe)
-ByteArrayOutputStream ans = new ByteArrayOutputStream();
+        } else {
+          // SYNTHETIC ANSWER (SAFE FOR MULTI + COMPRESSION)
+          ByteArrayOutputStream ans = new ByteArrayOutputStream();
 
-// NAME
-ans.write(q.qname);
+          ans.write(q.qname);
+          ans.write(0x00); ans.write(0x01); // TYPE A
+          ans.write(0x00); ans.write(0x01); // CLASS IN
 
-// TYPE A
-ans.write(0x00);
-ans.write(0x01);
+          ans.write(0x00); ans.write(0x00);
+          ans.write(0x00); ans.write(0x3c); // TTL
 
-// CLASS IN
-ans.write(0x00);
-ans.write(0x01);
+          ans.write(0x00); ans.write(0x04); // RDLENGTH
 
-// TTL = 60
-ans.write(0x00);
-ans.write(0x00);
-ans.write(0x00);
-ans.write(0x3c);
+          ans.write(0x08); ans.write(0x08);
+          ans.write(0x08); ans.write(0x08); // IP
 
-// RDLENGTH = 4
-ans.write(0x00);
-ans.write(0x04);
-
-// RDATA = 8.8.8.8
-ans.write(0x08);
-ans.write(0x08);
-ans.write(0x08);
-ans.write(0x08);
-
-answers.add(ans.toByteArray());
-
+          answers.add(ans.toByteArray());
+        }
       }
 
-      // Build final response
+      // ---------- BUILD FINAL RESPONSE ----------
       byte[] res = new byte[512];
       int ro = 0;
 
@@ -189,6 +188,8 @@ answers.add(ans.toByteArray());
       res[ro++] = (byte) requestId;
 
       int rFlags = (1 << 15) | (opcode << 11) | (rd << 8);
+      if (opcode != 0) rFlags |= 4;
+
       res[ro++] = (byte) (rFlags >> 8);
       res[ro++] = (byte) rFlags;
 
@@ -198,20 +199,18 @@ answers.add(ans.toByteArray());
       res[ro++] = 0x00;
       res[ro++] = (byte) answers.size();
 
-      res[ro++] = 0x00;
-      res[ro++] = 0x00;
-      res[ro++] = 0x00;
-      res[ro++] = 0x00;
+      res[ro++] = 0x00; res[ro++] = 0x00;
+      res[ro++] = 0x00; res[ro++] = 0x00;
 
+      // Questions
       for (Question q : questions) {
         System.arraycopy(q.qname, 0, res, ro, q.qname.length);
         ro += q.qname.length;
-        res[ro++] = 0x00;
-        res[ro++] = 0x01;
-        res[ro++] = 0x00;
-        res[ro++] = 0x01;
+        res[ro++] = 0x00; res[ro++] = 0x01;
+        res[ro++] = 0x00; res[ro++] = 0x01;
       }
 
+      // Answers
       for (byte[] a : answers) {
         System.arraycopy(a, 0, res, ro, a.length);
         ro += a.length;
