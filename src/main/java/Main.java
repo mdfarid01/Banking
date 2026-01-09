@@ -7,22 +7,24 @@ public class Main {
     response[0] = (byte)((id >> 8) & 0xFF);
     response[1] = (byte)(id & 0xFF);
   }
+
+  private static void setQR(byte[] response) { response[2] |= (byte)(1 << 7); }
   public static void main(String[] args){
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     System.out.println("Logs from your program will appear here!");
 
-    // TODO: Uncomment the code below to pass the first stage
+    // Uncomment this block to pass the first stage
     
     try(DatagramSocket serverSocket = new DatagramSocket(2053)) {
       while(true) {
         final byte[] buf = new byte[512];
-        setPacketId(bufResponse, 1234);
-        setQR(bufResponse);
         final DatagramPacket packet = new DatagramPacket(buf, buf.length);
         serverSocket.receive(packet);
         System.out.println("Received data");
     
         final byte[] bufResponse = new byte[512];
+        setPacketId(bufResponse, 1234);
+        setQR(bufResponse);
         final DatagramPacket packetResponse = new DatagramPacket(bufResponse, bufResponse.length, packet.getSocketAddress());
         serverSocket.send(packetResponse);
       }
