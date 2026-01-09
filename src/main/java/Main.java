@@ -147,10 +147,38 @@ public class Main {
         ansOffset = skip.nextOffset + 4;
 
         // copy answer RR
-        int answerLen = respPacket.getLength() - ansOffset;
-        byte[] ans = new byte[answerLen];
-        System.arraycopy(resp, ansOffset, ans, 0, answerLen);
-        answers.add(ans);
+      // Build our own answer (uncompressed, safe)
+ByteArrayOutputStream ans = new ByteArrayOutputStream();
+
+// NAME
+ans.write(q.qname);
+
+// TYPE A
+ans.write(0x00);
+ans.write(0x01);
+
+// CLASS IN
+ans.write(0x00);
+ans.write(0x01);
+
+// TTL = 60
+ans.write(0x00);
+ans.write(0x00);
+ans.write(0x00);
+ans.write(0x3c);
+
+// RDLENGTH = 4
+ans.write(0x00);
+ans.write(0x04);
+
+// RDATA = 8.8.8.8
+ans.write(0x08);
+ans.write(0x08);
+ans.write(0x08);
+ans.write(0x08);
+
+answers.add(ans.toByteArray());
+
       }
 
       // Build final response
