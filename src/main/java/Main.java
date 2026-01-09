@@ -1,135 +1,130 @@
-import java.io.IOException;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
+import java.io.*;
+import java.net.*;
+import java.util.*;
 
 public class Main {
 
-  public static void main(String[] args) {
-    System.out.println("Logs from your program will appear here!");
+  static class NameResult {
+    byte[] name;
+    int nextOffset;
+  }
 
-    try (DatagramSocket serverSocket = new DatagramSocket(2053)) {
-      while (true) {
+  static NameResult readName(byte[] packet, int offset) {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    int originalOffset = offset;
+    boolean jumped = false;
 
-        byte[] request = new byte[512];
-        DatagramPacket packet = new DatagramPacket(request, request.length);
-        serverSocket.receive(packet);
+    while (true) {
+      int len = packet[offset] & 0xFF;
 
-        // ===== PARSE HEADER =====
-        int requestId =
-            ((request[0] & 0xFF) << 8) | (request[1] & 0xFF);
-
-        int requestFlags =
-            ((request[2] & 0xFF) << 8) | (request[3] & 0xFF);
-
-        int opcode = (requestFlags >> 11) & 0xF;
-        int rd = (requestFlags >> 8) & 0x1;
-
-        // ===== PARSE QUESTION =====
-        int offset = 12;
-
-        // Save raw QNAME bytes
-        int qnameStart = offset;
-        while (request[offset] != 0x00) {
-          offset += (request[offset] & 0xFF) + 1;
-        }
-        offset++; // include null byte
-
-        int qnameLength = offset - qnameStart;
-        byte[] qname = new byte[qnameLength];
-        System.arraycopy(request, qnameStart, qname, 0, qnameLength);
-
-        // QTYPE (2 bytes)
-        int qtype = ((request[offset] & 0xFF) << 8)
-                  | (request[offset + 1] & 0xFF);
-        offset += 2;
-
-        // QCLASS (2 bytes)
-        int qclass = ((request[offset] & 0xFF) << 8)
-                   | (request[offset + 1] & 0xFF);
-        offset += 2;
-
-        // ===== BUILD RESPONSE =====
-        byte[] response = new byte[512];
-        int rOffset = 0;
-
-        // ID
-        response[rOffset++] = (byte) (requestId >> 8);
-        response[rOffset++] = (byte) requestId;
-
-        // FLAGS
-        int responseFlags = 0;
-        responseFlags |= (1 << 15);       // QR
-        responseFlags |= (opcode << 11);  // OPCODE
-        responseFlags |= (rd << 8);       // RD
-
-        if (opcode != 0) {
-          responseFlags |= 4;             // RCODE = Not Implemented
-        }
-
-        response[rOffset++] = (byte) (responseFlags >> 8);
-        response[rOffset++] = (byte) responseFlags;
-
-        // QDCOUNT = 1
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x01;
-
-        // ANCOUNT = 1
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x01;
-
-        // NSCOUNT = 0
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x00;
-
-        // ARCOUNT = 0
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x00;
-
-        // ===== QUESTION SECTION =====
-        System.arraycopy(qname, 0, response, rOffset, qname.length);
-        rOffset += qname.length;
-
-        response[rOffset++] = (byte) (qtype >> 8);
-        response[rOffset++] = (byte) qtype;
-
-        response[rOffset++] = (byte) (qclass >> 8);
-        response[rOffset++] = (byte) qclass;
-
-        // ===== ANSWER SECTION =====
-        System.arraycopy(qname, 0, response, rOffset, qname.length);
-        rOffset += qname.length;
-
-        // TYPE A
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x01;
-
-        // CLASS IN
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x01;
-
-        // TTL = 60
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x3c;
-
-        // RDLENGTH = 4
-        response[rOffset++] = 0x00;
-        response[rOffset++] = 0x04;
-
-        // RDATA = 8.8.8.8
-        response[rOffset++] = 0x08;
-        response[rOffset++] = 0x08;
-        response[rOffset++] = 0x08;
-        response[rOffset++] = 0x08;
-
-        DatagramPacket responsePacket =
-            new DatagramPacket(response, rOffset, packet.getSocketAddress());
-
-        serverSocket.send(responsePacket);
+      if ((len & 0xC0) == 0xC0) {
+        int pointer =
+            ((len & 0x3F) << 8) | (packet[offset + 1] & 0xFF);
+        offset = pointer;
+        jumped = true;
+        continue;
       }
-    } catch (IOException e) {
-      System.out.println("IOException: " + e.getMessage());
+
+      if (len == 0) {
+        out.write(0);
+        offset++;
+        break;
+      }
+
+      out.write(len);
+      offset++;
+      out.write(packet, offset, len);
+      offset += len;
+    }
+
+    NameResult res = new NameResult();
+    res.name = out.toByteArray();
+    res.nextOffset = jumped ? originalOffset + 2 : offset;
+    return res;
+  }
+
+  public static void main(String[] args) throws Exception {
+    DatagramSocket socket = new DatagramSocket(2053);
+
+    while (true) {
+      byte[] req = new byte[512];
+      DatagramPacket packet = new DatagramPacket(req, req.length);
+      socket.receive(packet);
+
+      int id = ((req[0] & 0xFF) << 8) | (req[1] & 0xFF);
+      int flags = ((req[2] & 0xFF) << 8) | (req[3] & 0xFF);
+      int opcode = (flags >> 11) & 0xF;
+      int rd = (flags >> 8) & 1;
+
+      int qdcount = ((req[4] & 0xFF) << 8) | (req[5] & 0xFF);
+
+      int offset = 12;
+      List<byte[]> names = new ArrayList<>();
+
+      for (int i = 0; i < qdcount; i++) {
+        NameResult nr = readName(req, offset);
+        names.add(nr.name);
+        offset = nr.nextOffset + 4; // skip QTYPE + QCLASS
+      }
+
+      byte[] res = new byte[512];
+      int ro = 0;
+
+      // Header
+      res[ro++] = (byte) (id >> 8);
+      res[ro++] = (byte) id;
+
+      int rf = (1 << 15) | (opcode << 11) | (rd << 8);
+      if (opcode != 0) rf |= 4;
+
+      res[ro++] = (byte) (rf >> 8);
+      res[ro++] = (byte) rf;
+
+      res[ro++] = 0x00;
+      res[ro++] = (byte) qdcount;
+
+      res[ro++] = 0x00;
+      res[ro++] = (byte) qdcount;
+
+      res[ro++] = 0x00;
+      res[ro++] = 0x00;
+      res[ro++] = 0x00;
+      res[ro++] = 0x00;
+
+      // Questions
+      for (byte[] n : names) {
+        System.arraycopy(n, 0, res, ro, n.length);
+        ro += n.length;
+        res[ro++] = 0x00;
+        res[ro++] = 0x01;
+        res[ro++] = 0x00;
+        res[ro++] = 0x01;
+      }
+
+      // Answers
+      for (byte[] n : names) {
+        System.arraycopy(n, 0, res, ro, n.length);
+        ro += n.length;
+        res[ro++] = 0x00;
+        res[ro++] = 0x01;
+        res[ro++] = 0x00;
+        res[ro++] = 0x01;
+
+        res[ro++] = 0x00;
+        res[ro++] = 0x00;
+        res[ro++] = 0x00;
+        res[ro++] = 0x3c;
+
+        res[ro++] = 0x00;
+        res[ro++] = 0x04;
+
+        res[ro++] = 0x08;
+        res[ro++] = 0x08;
+        res[ro++] = 0x08;
+        res[ro++] = 0x08;
+      }
+
+      socket.send(new DatagramPacket(res, ro, packet.getSocketAddress()));
     }
   }
 }
