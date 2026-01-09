@@ -9,6 +9,7 @@ public class Main {
 
     try (DatagramSocket serverSocket = new DatagramSocket(2053)) {
       while (true) {
+
         byte[] buf = new byte[512];
         DatagramPacket packet = new DatagramPacket(buf, buf.length);
         serverSocket.receive(packet);
@@ -23,43 +24,95 @@ public class Main {
         int opcode = (requestFlags >> 11) & 0xF;
         int rd = (requestFlags >> 8) & 0x1;
 
-        // ===== BUILD RESPONSE HEADER =====
-        byte[] response = new byte[12];
+        byte[] response = new byte[512];
+        int offset = 0;
 
-        // ID
-        response[0] = (byte) (requestId >> 8);
-        response[1] = (byte) requestId;
+        // ===== HEADER =====
+        response[offset++] = (byte) (requestId >> 8);
+        response[offset++] = (byte) requestId;
 
         int responseFlags = 0;
-        responseFlags |= (1 << 15);        // QR
-        responseFlags |= (opcode << 11);   // OPCODE
-        responseFlags |= (rd << 8);        // RD
+        responseFlags |= (1 << 15);       // QR
+        responseFlags |= (opcode << 11);  // OPCODE
+        responseFlags |= (rd << 8);       // RD
 
         if (opcode != 0) {
-          responseFlags |= 4;              // RCODE = Not Implemented
+          responseFlags |= 4;             // RCODE = Not Implemented
         }
 
-        response[2] = (byte) (responseFlags >> 8);
-        response[3] = (byte) responseFlags;
+        response[offset++] = (byte) (responseFlags >> 8);
+        response[offset++] = (byte) responseFlags;
 
-        // QDCOUNT (any valid value)
-        response[4] = 0x00;
-        response[5] = 0x01;
+        // QDCOUNT = 1
+        response[offset++] = 0x00;
+        response[offset++] = 0x01;
 
-        // ANCOUNT
-        response[6] = 0x00;
-        response[7] = 0x00;
+        // ANCOUNT = 1
+        response[offset++] = 0x00;
+        response[offset++] = 0x01;
 
-        // NSCOUNT
-        response[8] = 0x00;
-        response[9] = 0x00;
+        // NSCOUNT = 0
+        response[offset++] = 0x00;
+        response[offset++] = 0x00;
 
-        // ARCOUNT
-        response[10] = 0x00;
-        response[11] = 0x00;
+        // ARCOUNT = 0
+        response[offset++] = 0x00;
+        response[offset++] = 0x00;
+
+        // ===== QUESTION SECTION =====
+        response[offset++] = 0x0c;
+        byte[] label1 = "codecrafters".getBytes();
+        System.arraycopy(label1, 0, response, offset, label1.length);
+        offset += label1.length;
+
+        response[offset++] = 0x02;
+        byte[] label2 = "io".getBytes();
+        System.arraycopy(label2, 0, response, offset, label2.length);
+        offset += label2.length;
+
+        response[offset++] = 0x00;
+
+        response[offset++] = 0x00; // QTYPE A
+        response[offset++] = 0x01;
+
+        response[offset++] = 0x00; // QCLASS IN
+        response[offset++] = 0x01;
+
+        // ===== ANSWER SECTION =====
+        response[offset++] = 0x0c;
+        System.arraycopy(label1, 0, response, offset, label1.length);
+        offset += label1.length;
+
+        response[offset++] = 0x02;
+        System.arraycopy(label2, 0, response, offset, label2.length);
+        offset += label2.length;
+
+        response[offset++] = 0x00;
+
+        response[offset++] = 0x00; // TYPE A
+        response[offset++] = 0x01;
+
+        response[offset++] = 0x00; // CLASS IN
+        response[offset++] = 0x01;
+
+        // TTL = 60
+        response[offset++] = 0x00;
+        response[offset++] = 0x00;
+        response[offset++] = 0x00;
+        response[offset++] = 0x3c;
+
+        // RDLENGTH = 4
+        response[offset++] = 0x00;
+        response[offset++] = 0x04;
+
+        // RDATA = 8.8.8.8
+        response[offset++] = 0x08;
+        response[offset++] = 0x08;
+        response[offset++] = 0x08;
+        response[offset++] = 0x08;
 
         DatagramPacket responsePacket =
-            new DatagramPacket(response, response.length, packet.getSocketAddress());
+            new DatagramPacket(response, offset, packet.getSocketAddress());
 
         serverSocket.send(responsePacket);
       }
