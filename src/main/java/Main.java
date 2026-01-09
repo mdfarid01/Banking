@@ -4,15 +4,6 @@ import java.net.DatagramSocket;
 
 public class Main {
 
-  private static void setPacketId(byte[] response, int id) {
-    response[0] = (byte) ((id >> 8) & 0xFF);
-    response[1] = (byte) (id & 0xFF);
-  }
-
-  private static void setQR(byte[] response) {
-    response[2] |= (byte) (1 << 7); // QR = 1 (response)
-  }
-
   public static void main(String[] args) {
     System.out.println("Logs from your program will appear here!");
 
@@ -22,94 +13,53 @@ public class Main {
         DatagramPacket packet = new DatagramPacket(buf, buf.length);
         serverSocket.receive(packet);
 
-        byte[] bufResponse = new byte[512];
-        int offset = 0;
+        // ===== PARSE REQUEST HEADER =====
+        int requestId =
+            ((buf[0] & 0xFF) << 8) | (buf[1] & 0xFF);
 
-        // ===== HEADER =====
-        setPacketId(bufResponse, 1234);
-        offset += 2;
+        int requestFlags =
+            ((buf[2] & 0xFF) << 8) | (buf[3] & 0xFF);
 
-        setQR(bufResponse);
-        offset += 2;
+        int opcode = (requestFlags >> 11) & 0xF;
+        int rd = (requestFlags >> 8) & 0x1;
 
-        // QDCOUNT = 1
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x01;
+        // ===== BUILD RESPONSE HEADER =====
+        byte[] response = new byte[12];
 
-        // ANCOUNT = 1  ✅ NEW
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x01;
+        // ID
+        response[0] = (byte) (requestId >> 8);
+        response[1] = (byte) requestId;
 
-        // NSCOUNT = 0
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x00;
+        int responseFlags = 0;
+        responseFlags |= (1 << 15);        // QR
+        responseFlags |= (opcode << 11);   // OPCODE
+        responseFlags |= (rd << 8);        // RD
 
-        // ARCOUNT = 0
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x00;
+        if (opcode != 0) {
+          responseFlags |= 4;              // RCODE = Not Implemented
+        }
 
-        // ===== QUESTION SECTION =====
+        response[2] = (byte) (responseFlags >> 8);
+        response[3] = (byte) responseFlags;
 
-        // QNAME: codecrafters.io
-        bufResponse[offset++] = 0x0c; // "codecrafters"
-        byte[] label1 = "codecrafters".getBytes();
-        System.arraycopy(label1, 0, bufResponse, offset, label1.length);
-        offset += label1.length;
+        // QDCOUNT (any valid value)
+        response[4] = 0x00;
+        response[5] = 0x01;
 
-        bufResponse[offset++] = 0x02; // "io"
-        byte[] label2 = "io".getBytes();
-        System.arraycopy(label2, 0, bufResponse, offset, label2.length);
-        offset += label2.length;
+        // ANCOUNT
+        response[6] = 0x00;
+        response[7] = 0x00;
 
-        bufResponse[offset++] = 0x00; // terminator
+        // NSCOUNT
+        response[8] = 0x00;
+        response[9] = 0x00;
 
-        // QTYPE = A (1)
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x01;
-
-        // QCLASS = IN (1)
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x01;
-
-        // ===== ANSWER SECTION (NEW) =====
-
-        // NAME: codecrafters.io
-        bufResponse[offset++] = 0x0c;
-        System.arraycopy(label1, 0, bufResponse, offset, label1.length);
-        offset += label1.length;
-
-        bufResponse[offset++] = 0x02;
-        System.arraycopy(label2, 0, bufResponse, offset, label2.length);
-        offset += label2.length;
-
-        bufResponse[offset++] = 0x00;
-
-        // TYPE = A (1)
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x01;
-
-        // CLASS = IN (1)
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x01;
-
-        // TTL = 60 seconds
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x3c;
-
-        // RDLENGTH = 4
-        bufResponse[offset++] = 0x00;
-        bufResponse[offset++] = 0x04;
-
-        // RDATA = 8.8.8.8
-        bufResponse[offset++] = 0x08;
-        bufResponse[offset++] = 0x08;
-        bufResponse[offset++] = 0x08;
-        bufResponse[offset++] = 0x08;
+        // ARCOUNT
+        response[10] = 0x00;
+        response[11] = 0x00;
 
         DatagramPacket responsePacket =
-            new DatagramPacket(bufResponse, offset, packet.getSocketAddress());
+            new DatagramPacket(response, response.length, packet.getSocketAddress());
 
         serverSocket.send(responsePacket);
       }
